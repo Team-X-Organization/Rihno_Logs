@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/host"
@@ -10,13 +11,13 @@ import (
 
 func main() {
 	// cpu percentage
-	cpuPercentAvg, err := cpu.Percent(0, false)
+	cpuPercentAvg, err := cpu.Percent(1*time.Second, false)
 	if err != nil {
 		fmt.Println(err)
 	}
 	fmt.Println(cpuPercentAvg)
 
-	cpuPercentMulti, err := cpu.Percent(0, true)
+	cpuPercentMulti, err := cpu.Percent(1*time.Second, true)
 	if err != nil {
 		fmt.Println(err)
 	}
