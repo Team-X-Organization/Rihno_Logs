@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -142,6 +143,51 @@ type CompleteFeatureVector struct {
 	BandwidthAsymmetry    float64 `json:"bandwidth_asymmetry"`
 	C2CommunicationScore  float64 `json:"c2_communication_score"`
 	FailedConnectionRatio float64 `json:"failed_connection_ratio"`
+
+	// ========== NETWORK MAPPING DATA ==========
+	NetworkMap NetworkMapData `json:"network_map"`
+}
+
+// NetworkMapData contains all IPv4 connection mapping information
+type NetworkMapData struct {
+	IncomingConnections []IPConnectionDetail `json:"incoming_connections"`
+	OutgoingConnections []IPConnectionDetail `json:"outgoing_connections"`
+	IncomingIPSummary   []IPSummary          `json:"incoming_ip_summary"`
+	OutgoingIPSummary   []IPSummary          `json:"outgoing_ip_summary"`
+	LocalIPs            []string             `json:"local_ips"`
+	TotalIncoming       int                  `json:"total_incoming"`
+	TotalOutgoing       int                  `json:"total_outgoing"`
+}
+
+// IPConnectionDetail contains detailed information about each connection
+type IPConnectionDetail struct {
+	RemoteIP     string `json:"remote_ip"`
+	RemotePort   uint32 `json:"remote_port"`
+	LocalIP      string `json:"local_ip"`
+	LocalPort    uint32 `json:"local_port"`
+	Protocol     string `json:"protocol"`
+	State        string `json:"state"`
+	PID          int32  `json:"pid"`
+	ProcessName  string `json:"process_name"`
+	Direction    string `json:"direction"` // "incoming" or "outgoing"
+	IsPrivate    bool   `json:"is_private"`
+	IsLoopback   bool   `json:"is_loopback"`
+	IsSuspicious bool   `json:"is_suspicious"` // Based on suspicious ports
+}
+
+// IPSummary provides aggregated statistics per IP address
+type IPSummary struct {
+	IPAddress       string   `json:"ip_address"`
+	ConnectionCount int      `json:"connection_count"`
+	Ports           []uint32 `json:"ports"`
+	Protocols       []string `json:"protocols"`
+	States          []string `json:"states"`
+	ProcessNames    []string `json:"process_names"`
+	IsPrivate       bool     `json:"is_private"`
+	IsLoopback      bool     `json:"is_loopback"`
+	IsSuspicious    bool     `json:"is_suspicious"`
+	FirstSeen       string   `json:"first_seen"`
+	LastSeen        string   `json:"last_seen"`
 }
 
 // Collector state for tracking changes
@@ -165,6 +211,10 @@ type CompleteCollectorState struct {
 	ConnectionTimestamps []time.Time
 	PacketSizes          []uint64
 
+	// For network mapping
+	IPFirstSeen map[string]time.Time
+	IPLastSeen  map[string]time.Time
+
 	LastTimestamp time.Time
 }
 
@@ -175,6 +225,8 @@ func NewCompleteCollectorState() *CompleteCollectorState {
 		LastSourceIPs:        make(map[string]bool),
 		ConnectionTimestamps: make([]time.Time, 0),
 		PacketSizes:          make([]uint64, 0),
+		IPFirstSeen:          make(map[string]time.Time),
+		IPLastSeen:           make(map[string]time.Time),
 		LastTimestamp:        time.Now(),
 	}
 }
@@ -664,7 +716,236 @@ func collectNetworkFeatures(features *CompleteFeatureVector, state *CompleteColl
 	features.ConnectionTerminationRate = closedConns
 	state.LastConnections = currentConnections
 
+	// ========== COLLECT NETWORK MAPPING DATA ==========
+	collectNetworkMapData(features, state, connections)
+
 	return nil
+}
+
+// getProtocolName converts the socket type ID to a human-readable string.
+// 1 = TCP (SOCK_STREAM), 2 = UDP (SOCK_DGRAM)
+func getProtocolName(t uint32) string {
+	switch t {
+	case 1:
+		return "TCP"
+	case 2:
+		return "UDP"
+	default:
+		return fmt.Sprintf("UNKNOWN(%d)", t)
+	}
+}
+
+func collectNetworkMapData(features *CompleteFeatureVector, state *CompleteCollectorState, connections []psnet.ConnectionStat) {
+	features.NetworkMap = NetworkMapData{
+		IncomingConnections: make([]IPConnectionDetail, 0),
+		OutgoingConnections: make([]IPConnectionDetail, 0),
+		LocalIPs:            make([]string, 0),
+	}
+
+	// Track unique local IPs
+	localIPSet := make(map[string]bool)
+
+	// Maps for IP summaries
+	incomingIPMap := make(map[string]*IPSummary)
+	outgoingIPMap := make(map[string]*IPSummary)
+
+	currentTime := time.Now().Format("2006-01-02 15:04:05")
+
+	for _, conn := range connections {
+		// Skip if no remote address (listening sockets)
+		if conn.Raddr.IP == "" {
+			continue
+		}
+
+		// Only process IPv4 addresses
+		if !isIPv4(conn.Raddr.IP) {
+			continue
+		}
+
+		// Determine direction based on connection state and well-known ports
+		direction := determineDirection(conn)
+
+		// Get process name
+		processName := ""
+		if conn.Pid > 0 {
+			p, err := process.NewProcess(conn.Pid)
+			if err == nil {
+				processName, _ = p.Name()
+			}
+		}
+
+		// Check if suspicious
+		isSuspicious := suspiciousPorts[conn.Laddr.Port] || suspiciousPorts[conn.Raddr.Port]
+
+		// Create connection detail
+		detail := IPConnectionDetail{
+			RemoteIP:     conn.Raddr.IP,
+			RemotePort:   conn.Raddr.Port,
+			LocalIP:      conn.Laddr.IP,
+			LocalPort:    conn.Laddr.Port,
+			Protocol:     getProtocolName(conn.Type),
+			State:        conn.Status,
+			PID:          conn.Pid,
+			ProcessName:  processName,
+			Direction:    direction,
+			IsPrivate:    isPrivateIP(conn.Raddr.IP),
+			IsLoopback:   isLoopback(conn.Raddr.IP),
+			IsSuspicious: isSuspicious,
+		}
+
+		// Track local IPs
+		if conn.Laddr.IP != "" {
+			localIPSet[conn.Laddr.IP] = true
+		}
+
+		// Update IP first/last seen
+		if _, exists := state.IPFirstSeen[conn.Raddr.IP]; !exists {
+			state.IPFirstSeen[conn.Raddr.IP] = time.Now()
+		}
+		state.IPLastSeen[conn.Raddr.IP] = time.Now()
+
+		// Add to appropriate list
+		if direction == "incoming" {
+			features.NetworkMap.IncomingConnections = append(features.NetworkMap.IncomingConnections, detail)
+			features.NetworkMap.TotalIncoming++
+
+			// Update incoming IP summary
+			if summary, exists := incomingIPMap[conn.Raddr.IP]; exists {
+				summary.ConnectionCount++
+				summary.Ports = appendUnique(summary.Ports, conn.Raddr.Port)
+				summary.Protocols = appendUniqueStr(summary.Protocols, detail.Protocol)
+				summary.States = appendUniqueStr(summary.States, conn.Status)
+				if processName != "" {
+					summary.ProcessNames = appendUniqueStr(summary.ProcessNames, processName)
+				}
+				summary.LastSeen = currentTime
+			} else {
+				incomingIPMap[conn.Raddr.IP] = &IPSummary{
+					IPAddress:       conn.Raddr.IP,
+					ConnectionCount: 1,
+					Ports:           []uint32{conn.Raddr.Port},
+					Protocols:       []string{detail.Protocol},
+					States:          []string{conn.Status},
+					ProcessNames:    []string{processName},
+					IsPrivate:       detail.IsPrivate,
+					IsLoopback:      detail.IsLoopback,
+					IsSuspicious:    isSuspicious,
+					FirstSeen:       state.IPFirstSeen[conn.Raddr.IP].Format("2006-01-02 15:04:05"),
+					LastSeen:        currentTime,
+				}
+			}
+		} else {
+			features.NetworkMap.OutgoingConnections = append(features.NetworkMap.OutgoingConnections, detail)
+			features.NetworkMap.TotalOutgoing++
+
+			// Update outgoing IP summary
+			if summary, exists := outgoingIPMap[conn.Raddr.IP]; exists {
+				summary.ConnectionCount++
+				summary.Ports = appendUnique(summary.Ports, conn.Raddr.Port)
+				summary.Protocols = appendUniqueStr(summary.Protocols, detail.Protocol)
+				summary.States = appendUniqueStr(summary.States, conn.Status)
+				if processName != "" {
+					summary.ProcessNames = appendUniqueStr(summary.ProcessNames, processName)
+				}
+				summary.LastSeen = currentTime
+			} else {
+				outgoingIPMap[conn.Raddr.IP] = &IPSummary{
+					IPAddress:       conn.Raddr.IP,
+					ConnectionCount: 1,
+					Ports:           []uint32{conn.Raddr.Port},
+					Protocols:       []string{detail.Protocol},
+					States:          []string{conn.Status},
+					ProcessNames:    []string{processName},
+					IsPrivate:       detail.IsPrivate,
+					IsLoopback:      detail.IsLoopback,
+					IsSuspicious:    isSuspicious,
+					FirstSeen:       state.IPFirstSeen[conn.Raddr.IP].Format("2006-01-02 15:04:05"),
+					LastSeen:        currentTime,
+				}
+			}
+		}
+	}
+
+	// Convert maps to slices
+	for _, summary := range incomingIPMap {
+		features.NetworkMap.IncomingIPSummary = append(features.NetworkMap.IncomingIPSummary, *summary)
+	}
+	for _, summary := range outgoingIPMap {
+		features.NetworkMap.OutgoingIPSummary = append(features.NetworkMap.OutgoingIPSummary, *summary)
+	}
+
+	// Convert local IP set to slice
+	for ip := range localIPSet {
+		features.NetworkMap.LocalIPs = append(features.NetworkMap.LocalIPs, ip)
+	}
+}
+
+// Helper functions for network mapping
+func determineDirection(conn psnet.ConnectionStat) string {
+	// Listening connections are incoming
+	if conn.Status == "LISTEN" {
+		return "incoming"
+	}
+
+	// ESTABLISHED connections - check if local port is well-known (server) or ephemeral (client)
+	if conn.Status == "ESTABLISHED" {
+		if conn.Laddr.Port < 1024 {
+			// Local port is well-known, likely incoming
+			return "incoming"
+		} else if conn.Raddr.Port < 1024 {
+			// Remote port is well-known, likely outgoing
+			return "outgoing"
+		} else if conn.Laddr.Port > 32768 {
+			// Local port is ephemeral, likely outgoing
+			return "outgoing"
+		} else {
+			// Remote port is ephemeral, likely incoming
+			return "incoming"
+		}
+	}
+
+	// SYN_SENT means we initiated, so outgoing
+	if conn.Status == "SYN_SENT" {
+		return "outgoing"
+	}
+
+	// SYN_RECV means they initiated, so incoming
+	if conn.Status == "SYN_RECV" {
+		return "incoming"
+	}
+
+	// Default to outgoing for other states
+	return "outgoing"
+}
+
+func isIPv4(ip string) bool {
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
+	}
+	// Check if it's IPv4 (will be non-nil after To4() if it's IPv4)
+	return parsedIP.To4() != nil
+}
+
+func appendUnique(slice []uint32, item uint32) []uint32 {
+	for _, existing := range slice {
+		if existing == item {
+			return slice
+		}
+	}
+	return append(slice, item)
+}
+
+func appendUniqueStr(slice []string, item string) []string {
+	if item == "" {
+		return slice
+	}
+	for _, existing := range slice {
+		if existing == item {
+			return slice
+		}
+	}
+	return append(slice, item)
 }
 
 func calculateDerivedFeatures(features *CompleteFeatureVector, state *CompleteCollectorState) {
@@ -869,6 +1150,12 @@ func getCSVHeaders() []string {
 		"bandwidth_asymmetry",
 		"c2_communication_score",
 		"failed_connection_ratio",
+		// Network Map Summary
+		"total_incoming_connections",
+		"total_outgoing_connections",
+		"unique_incoming_ips",
+		"unique_outgoing_ips",
+		"local_ips_count",
 	}
 }
 
@@ -967,6 +1254,12 @@ func featureToCSVRow(f *CompleteFeatureVector) []string {
 		strconv.FormatFloat(f.BandwidthAsymmetry, 'f', 6, 64),
 		strconv.FormatFloat(f.C2CommunicationScore, 'f', 6, 64),
 		strconv.FormatFloat(f.FailedConnectionRatio, 'f', 6, 64),
+		// Network Map Summary
+		strconv.Itoa(f.NetworkMap.TotalIncoming),
+		strconv.Itoa(f.NetworkMap.TotalOutgoing),
+		strconv.Itoa(len(f.NetworkMap.IncomingIPSummary)),
+		strconv.Itoa(len(f.NetworkMap.OutgoingIPSummary)),
+		strconv.Itoa(len(f.NetworkMap.LocalIPs)),
 	}
 }
 
@@ -991,6 +1284,68 @@ func writeToCSV(filename string, features *CompleteFeatureVector, isNewFile bool
 	// Write the data row
 	if err := writer.Write(featureToCSVRow(features)); err != nil {
 		return fmt.Errorf("error writing CSV row: %w", err)
+	}
+
+	return nil
+}
+
+// writeNetworkMapJSON writes the network map data to a JSON file
+func writeNetworkMapJSON(filename string, networkMap *NetworkMapData, timestamp time.Time) error {
+	// Create a structure that includes timestamp
+	data := struct {
+		Timestamp  string         `json:"timestamp"`
+		NetworkMap NetworkMapData `json:"network_map"`
+	}{
+		Timestamp:  timestamp.Format("2006-01-02 15:04:05"),
+		NetworkMap: *networkMap,
+	}
+
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error marshaling network map to JSON: %w", err)
+	}
+
+	// Write to file (overwrite each time with latest snapshot)
+	err = os.WriteFile(filename, jsonData, 0644)
+	if err != nil {
+		return fmt.Errorf("error writing network map JSON file: %w", err)
+	}
+
+	return nil
+}
+
+// appendNetworkMapHistory appends network map to a history JSON file
+func appendNetworkMapHistory(filename string, networkMap *NetworkMapData, timestamp time.Time) error {
+	// Read existing data if file exists
+	var history []map[string]interface{}
+
+	if data, err := os.ReadFile(filename); err == nil {
+		json.Unmarshal(data, &history)
+	}
+
+	// Create new entry
+	entry := map[string]interface{}{
+		"timestamp":   timestamp.Format("2006-01-02 15:04:05"),
+		"network_map": networkMap,
+	}
+
+	// Append to history
+	history = append(history, entry)
+
+	// Keep only last 100 entries to prevent file from growing too large
+	if len(history) > 100 {
+		history = history[len(history)-100:]
+	}
+
+	// Write back to file
+	jsonData, err := json.MarshalIndent(history, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error marshaling network map history: %w", err)
+	}
+
+	err = os.WriteFile(filename, jsonData, 0644)
+	if err != nil {
+		return fmt.Errorf("error writing network map history file: %w", err)
 	}
 
 	return nil
@@ -1053,19 +1408,66 @@ func printCompleteFeatureSummary(f *CompleteFeatureVector) {
 	fmt.Printf("Connection Density: %.2f connections/process\n", f.ConnectionDensity)
 	fmt.Printf("Failed Connection Ratio: %.3f\n", f.FailedConnectionRatio)
 
+	fmt.Println("\n--- NETWORK MAP SUMMARY ---")
+	fmt.Printf("Incoming: %d connections from %d unique IPs\n",
+		f.NetworkMap.TotalIncoming, len(f.NetworkMap.IncomingIPSummary))
+	fmt.Printf("Outgoing: %d connections to %d unique IPs\n",
+		f.NetworkMap.TotalOutgoing, len(f.NetworkMap.OutgoingIPSummary))
+	fmt.Printf("Local IPs: %d\n", len(f.NetworkMap.LocalIPs))
+
+	// Show top 5 incoming IPs
+	if len(f.NetworkMap.IncomingIPSummary) > 0 {
+		fmt.Println("\nTop Incoming IPs:")
+		topCount := 5
+		if len(f.NetworkMap.IncomingIPSummary) < topCount {
+			topCount = len(f.NetworkMap.IncomingIPSummary)
+		}
+		for i := 0; i < topCount; i++ {
+			summary := f.NetworkMap.IncomingIPSummary[i]
+			suspicious := ""
+			if summary.IsSuspicious {
+				suspicious = " [SUSPICIOUS]"
+			}
+			fmt.Printf("  %s: %d connections%s\n", summary.IPAddress, summary.ConnectionCount, suspicious)
+		}
+	}
+
+	// Show top 5 outgoing IPs
+	if len(f.NetworkMap.OutgoingIPSummary) > 0 {
+		fmt.Println("\nTop Outgoing IPs:")
+		topCount := 5
+		if len(f.NetworkMap.OutgoingIPSummary) < topCount {
+			topCount = len(f.NetworkMap.OutgoingIPSummary)
+		}
+		for i := 0; i < topCount; i++ {
+			summary := f.NetworkMap.OutgoingIPSummary[i]
+			suspicious := ""
+			if summary.IsSuspicious {
+				suspicious = " [SUSPICIOUS]"
+			}
+			fmt.Printf("  %s: %d connections%s\n", summary.IPAddress, summary.ConnectionCount, suspicious)
+		}
+	}
+
 	fmt.Println("\n" + strings.Repeat("=", 70))
 }
 
 func main() {
 	csvFilename := "reading.csv"
+	networkMapFilename := "network_map_current.json"
+	networkMapHistoryFilename := "network_map_history.json"
+
 	state := NewCompleteCollectorState()
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	fmt.Println("Starting Complete Host + Network-Based IDS Feature Collection")
 	fmt.Println("Collection interval: 10 seconds")
-	fmt.Println("Output file: " + csvFilename)
-	fmt.Println("Total metrics: 87")
+	fmt.Println("Output files:")
+	fmt.Println("  - " + csvFilename + " (metrics CSV)")
+	fmt.Println("  - " + networkMapFilename + " (current network map JSON)")
+	fmt.Println("  - " + networkMapHistoryFilename + " (network map history JSON)")
+	fmt.Println("Total metrics: 92 (87 core + 5 network map summary)")
 	fmt.Println(strings.Repeat("=", 70))
 
 	// Check if file exists to determine if we need to write headers
@@ -1083,8 +1485,23 @@ func main() {
 		if err := writeToCSV(csvFilename, features, isNewFile); err != nil {
 			fmt.Printf("Error writing to CSV: %v\n", err)
 		} else {
-			fmt.Printf("✓ Data saved to %s\n", csvFilename)
+			fmt.Printf("✓ Metrics saved to %s\n", csvFilename)
 		}
+
+		// Write network map to JSON (current snapshot)
+		if err := writeNetworkMapJSON(networkMapFilename, &features.NetworkMap, features.Timestamp); err != nil {
+			fmt.Printf("Error writing network map: %v\n", err)
+		} else {
+			fmt.Printf("✓ Network map saved to %s\n", networkMapFilename)
+		}
+
+		// Append to network map history
+		if err := appendNetworkMapHistory(networkMapHistoryFilename, &features.NetworkMap, features.Timestamp); err != nil {
+			fmt.Printf("Error writing network map history: %v\n", err)
+		} else {
+			fmt.Printf("✓ Network map history updated in %s\n", networkMapHistoryFilename)
+		}
+
 		isNewFile = false
 	}
 
@@ -1101,7 +1518,21 @@ func main() {
 		if err := writeToCSV(csvFilename, features, false); err != nil {
 			fmt.Printf("Error writing to CSV: %v\n", err)
 		} else {
-			fmt.Printf("✓ Data saved to %s\n", csvFilename)
+			fmt.Printf("✓ Metrics saved to %s\n", csvFilename)
+		}
+
+		// Write network map to JSON (current snapshot)
+		if err := writeNetworkMapJSON(networkMapFilename, &features.NetworkMap, features.Timestamp); err != nil {
+			fmt.Printf("Error writing network map: %v\n", err)
+		} else {
+			fmt.Printf("✓ Network map saved to %s\n", networkMapFilename)
+		}
+
+		// Append to network map history
+		if err := appendNetworkMapHistory(networkMapHistoryFilename, &features.NetworkMap, features.Timestamp); err != nil {
+			fmt.Printf("Error writing network map history: %v\n", err)
+		} else {
+			fmt.Printf("✓ Network map history updated in %s\n", networkMapHistoryFilename)
 		}
 	}
 }

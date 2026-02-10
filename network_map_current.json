@@ -1,0 +1,498 @@
+{
+  "timestamp": "2026-02-10 14:35:37",
+  "network_map": {
+    "incoming_connections": [
+      {
+        "remote_ip": "127.0.0.1",
+        "remote_port": 51710,
+        "local_ip": "127.0.0.1",
+        "local_port": 6189,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 14301,
+        "process_name": "goland",
+        "direction": "incoming",
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "127.0.0.1",
+        "remote_port": 51711,
+        "local_ip": "127.0.0.1",
+        "local_port": 6189,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 14301,
+        "process_name": "goland",
+        "direction": "incoming",
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "127.0.0.1",
+        "remote_port": 51712,
+        "local_ip": "127.0.0.1",
+        "local_port": 6189,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 14301,
+        "process_name": "goland",
+        "direction": "incoming",
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "127.0.0.1",
+        "remote_port": 51708,
+        "local_ip": "127.0.0.1",
+        "local_port": 6188,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 22876,
+        "process_name": "cef_server",
+        "direction": "incoming",
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "127.0.0.1",
+        "remote_port": 51709,
+        "local_ip": "127.0.0.1",
+        "local_port": 6188,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 22876,
+        "process_name": "cef_server",
+        "direction": "incoming",
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false
+      }
+    ],
+    "outgoing_connections": [
+      {
+        "remote_ip": "34.107.243.93",
+        "remote_port": 443,
+        "local_ip": "192.168.1.4",
+        "local_port": 51975,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 6797,
+        "process_name": "zen",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "140.82.112.26",
+        "remote_port": 443,
+        "local_ip": "192.168.1.4",
+        "local_port": 51978,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 6797,
+        "process_name": "zen",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "18.161.125.4",
+        "remote_port": 443,
+        "local_ip": "192.168.1.4",
+        "local_port": 52002,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 6797,
+        "process_name": "zen",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "18.215.101.25",
+        "remote_port": 443,
+        "local_ip": "192.168.1.4",
+        "local_port": 52010,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 6797,
+        "process_name": "zen",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "18.97.36.57",
+        "remote_port": 443,
+        "local_ip": "192.168.1.4",
+        "local_port": 52007,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 6797,
+        "process_name": "zen",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "18.215.101.25",
+        "remote_port": 443,
+        "local_ip": "192.168.1.4",
+        "local_port": 52006,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 6797,
+        "process_name": "zen",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "192.168.1.10",
+        "remote_port": 22,
+        "local_ip": "192.168.1.4",
+        "local_port": 51215,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 12592,
+        "process_name": "ssh",
+        "direction": "outgoing",
+        "is_private": true,
+        "is_loopback": false,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "127.0.0.1",
+        "remote_port": 6188,
+        "local_ip": "127.0.0.1",
+        "local_port": 51708,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 14301,
+        "process_name": "goland",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "127.0.0.1",
+        "remote_port": 6188,
+        "local_ip": "127.0.0.1",
+        "local_port": 51709,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 14301,
+        "process_name": "goland",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "127.0.0.1",
+        "remote_port": 52076,
+        "local_ip": "127.0.0.1",
+        "local_port": 52079,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 14301,
+        "process_name": "goland",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "127.0.0.1",
+        "remote_port": 6189,
+        "local_ip": "127.0.0.1",
+        "local_port": 51710,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 22876,
+        "process_name": "cef_server",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "127.0.0.1",
+        "remote_port": 6189,
+        "local_ip": "127.0.0.1",
+        "local_port": 51711,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 22876,
+        "process_name": "cef_server",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "127.0.0.1",
+        "remote_port": 6189,
+        "local_ip": "127.0.0.1",
+        "local_port": 51712,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 22876,
+        "process_name": "cef_server",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "127.0.0.1",
+        "remote_port": 52079,
+        "local_ip": "127.0.0.1",
+        "local_port": 52076,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 31449,
+        "process_name": "full-line-inference",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false
+      },
+      {
+        "remote_ip": "20.207.73.82",
+        "remote_port": 443,
+        "local_ip": "192.168.1.4",
+        "local_port": 52083,
+        "protocol": "TCP",
+        "state": "ESTABLISHED",
+        "pid": 81072,
+        "process_name": "Browser Helper",
+        "direction": "outgoing",
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false
+      }
+    ],
+    "incoming_ip_summary": [
+      {
+        "ip_address": "127.0.0.1",
+        "connection_count": 5,
+        "ports": [
+          51710,
+          51711,
+          51712,
+          51708,
+          51709
+        ],
+        "protocols": [
+          "TCP"
+        ],
+        "states": [
+          "ESTABLISHED"
+        ],
+        "process_names": [
+          "goland",
+          "cef_server"
+        ],
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false,
+        "first_seen": "2026-02-10 14:35:31",
+        "last_seen": "2026-02-10 14:35:41"
+      }
+    ],
+    "outgoing_ip_summary": [
+      {
+        "ip_address": "127.0.0.1",
+        "connection_count": 7,
+        "ports": [
+          6188,
+          52076,
+          6189,
+          52079
+        ],
+        "protocols": [
+          "TCP"
+        ],
+        "states": [
+          "ESTABLISHED"
+        ],
+        "process_names": [
+          "goland",
+          "cef_server",
+          "full-line-inference"
+        ],
+        "is_private": false,
+        "is_loopback": true,
+        "is_suspicious": false,
+        "first_seen": "2026-02-10 14:35:31",
+        "last_seen": "2026-02-10 14:35:41"
+      },
+      {
+        "ip_address": "20.207.73.82",
+        "connection_count": 1,
+        "ports": [
+          443
+        ],
+        "protocols": [
+          "TCP"
+        ],
+        "states": [
+          "ESTABLISHED"
+        ],
+        "process_names": [
+          "Browser Helper"
+        ],
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false,
+        "first_seen": "2026-02-10 14:35:41",
+        "last_seen": "2026-02-10 14:35:41"
+      },
+      {
+        "ip_address": "34.107.243.93",
+        "connection_count": 1,
+        "ports": [
+          443
+        ],
+        "protocols": [
+          "TCP"
+        ],
+        "states": [
+          "ESTABLISHED"
+        ],
+        "process_names": [
+          "zen"
+        ],
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false,
+        "first_seen": "2026-02-10 14:35:31",
+        "last_seen": "2026-02-10 14:35:41"
+      },
+      {
+        "ip_address": "140.82.112.26",
+        "connection_count": 1,
+        "ports": [
+          443
+        ],
+        "protocols": [
+          "TCP"
+        ],
+        "states": [
+          "ESTABLISHED"
+        ],
+        "process_names": [
+          "zen"
+        ],
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false,
+        "first_seen": "2026-02-10 14:35:31",
+        "last_seen": "2026-02-10 14:35:41"
+      },
+      {
+        "ip_address": "18.161.125.4",
+        "connection_count": 1,
+        "ports": [
+          443
+        ],
+        "protocols": [
+          "TCP"
+        ],
+        "states": [
+          "ESTABLISHED"
+        ],
+        "process_names": [
+          "zen"
+        ],
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false,
+        "first_seen": "2026-02-10 14:35:31",
+        "last_seen": "2026-02-10 14:35:41"
+      },
+      {
+        "ip_address": "18.215.101.25",
+        "connection_count": 2,
+        "ports": [
+          443
+        ],
+        "protocols": [
+          "TCP"
+        ],
+        "states": [
+          "ESTABLISHED"
+        ],
+        "process_names": [
+          "zen"
+        ],
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false,
+        "first_seen": "2026-02-10 14:35:31",
+        "last_seen": "2026-02-10 14:35:41"
+      },
+      {
+        "ip_address": "18.97.36.57",
+        "connection_count": 1,
+        "ports": [
+          443
+        ],
+        "protocols": [
+          "TCP"
+        ],
+        "states": [
+          "ESTABLISHED"
+        ],
+        "process_names": [
+          "zen"
+        ],
+        "is_private": false,
+        "is_loopback": false,
+        "is_suspicious": false,
+        "first_seen": "2026-02-10 14:35:31",
+        "last_seen": "2026-02-10 14:35:41"
+      },
+      {
+        "ip_address": "192.168.1.10",
+        "connection_count": 1,
+        "ports": [
+          22
+        ],
+        "protocols": [
+          "TCP"
+        ],
+        "states": [
+          "ESTABLISHED"
+        ],
+        "process_names": [
+          "ssh"
+        ],
+        "is_private": true,
+        "is_loopback": false,
+        "is_suspicious": false,
+        "first_seen": "2026-02-10 14:35:31",
+        "last_seen": "2026-02-10 14:35:41"
+      }
+    ],
+    "local_ips": [
+      "192.168.1.4",
+      "127.0.0.1"
+    ],
+    "total_incoming": 5,
+    "total_outgoing": 15
+  }
+}
