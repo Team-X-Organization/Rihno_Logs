@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/csv"
 	"fmt"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,29 +17,40 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
-// CompleteFeatureVector with both host and network features
+// CompleteFeatureVector with all host and network features
 type CompleteFeatureVector struct {
 	Timestamp time.Time `json:"timestamp"`
 
 	// ========== HOST-BASED FEATURES ==========
 	// Process Features
-	ProcessCount        int     `json:"process_count"`
-	ProcessCreationRate int     `json:"process_creation_rate"`
-	ProcessTermRate     int     `json:"process_termination_rate"`
-	HighCPUProcessCount int     `json:"high_cpu_process_count"`
-	HighMemProcessCount int     `json:"high_mem_process_count"`
-	AvgProcessCPU       float64 `json:"avg_process_cpu"`
-	AvgProcessMemory    float64 `json:"avg_process_memory"`
-	TotalThreads        int     `json:"total_threads"`
-	ZombieProcessCount  int     `json:"zombie_process_count"`
-	RootProcessCount    int     `json:"root_process_count"`
+	ProcessCount           int     `json:"process_count"`
+	ProcessCreationRate    int     `json:"process_creation_rate"`
+	ProcessTermRate        int     `json:"process_termination_rate"`
+	HighCPUProcessCount    int     `json:"high_cpu_process_count"`
+	HighMemProcessCount    int     `json:"high_mem_process_count"`
+	AvgProcessCPU          float64 `json:"avg_process_cpu"`
+	AvgProcessMemory       float64 `json:"avg_process_memory"`
+	AvgProcessRSS          uint64  `json:"avg_process_rss"`
+	AvgProcessVMS          uint64  `json:"avg_process_vms"`
+	TotalThreads           int     `json:"total_threads"`
+	ZombieProcessCount     int     `json:"zombie_process_count"`
+	RootProcessCount       int     `json:"root_process_count"`
+	AvgProcessAge          float64 `json:"avg_process_age_seconds"`
+	ProcessWithManyThreads int     `json:"process_with_many_threads"` // >100 threads
+	SuspiciousProcessNames int     `json:"suspicious_process_names"`
+	TotalFileDescriptors   int     `json:"total_file_descriptors"`
 
 	// System Resources
-	SystemCPU           float64 `json:"system_cpu"`
-	SystemMemoryPercent float64 `json:"system_memory_percent"`
-	SystemMemoryUsed    uint64  `json:"system_memory_used"`
-	SystemMemoryAvail   uint64  `json:"system_memory_available"`
-	SwapUsedPercent     float64 `json:"swap_used_percent"`
+	SystemCPU           float64   `json:"system_cpu"`
+	PerCoreCPU          []float64 `json:"per_core_cpu"` // Will be averaged for CSV
+	AvgCoreCPU          float64   `json:"avg_core_cpu"`
+	SystemMemoryPercent float64   `json:"system_memory_percent"`
+	SystemMemoryUsed    uint64    `json:"system_memory_used"`
+	SystemMemoryAvail   uint64    `json:"system_memory_available"`
+	SystemMemoryTotal   uint64    `json:"system_memory_total"`
+	SwapUsedPercent     float64   `json:"swap_used_percent"`
+	SwapTotal           uint64    `json:"swap_total"`
+	SwapUsed            uint64    `json:"swap_used"`
 
 	// Disk I/O
 	DiskReadBytes  uint64  `json:"disk_read_bytes"`
@@ -45,10 +59,18 @@ type CompleteFeatureVector struct {
 	DiskWriteRate  float64 `json:"disk_write_rate"`
 	DiskReadCount  uint64  `json:"disk_read_count"`
 	DiskWriteCount uint64  `json:"disk_write_count"`
+	DiskIORate     float64 `json:"disk_io_rate"` // Combined read+write rate
 
 	// User Sessions
-	LoggedInUsers int    `json:"logged_in_users"`
-	SystemUptime  uint64 `json:"system_uptime"`
+	LoggedInUsers  int      `json:"logged_in_users"`
+	UserTerminals  []string `json:"user_terminals"`
+	UserHosts      []string `json:"user_hosts"`
+	SystemUptime   uint64   `json:"system_uptime"`
+	SystemBootTime uint64   `json:"system_boot_time"`
+
+	// Derived Host Features
+	CPUUsageSpike    float64 `json:"cpu_usage_spike"`
+	MemoryUsageSpike float64 `json:"memory_usage_spike"`
 
 	// ========== NETWORK-BASED FEATURES ==========
 	// Connection Statistics
@@ -78,24 +100,21 @@ type CompleteFeatureVector struct {
 	NetPacketRecvRate float64 `json:"net_packet_recv_rate"`
 
 	// IP Address Features
-	UniqueSourceIPs        int            `json:"unique_source_ips"`
-	UniqueDestIPs          int            `json:"unique_dest_ips"`
-	NewSourceIPs           int            `json:"new_source_ips"`
-	PrivateIPConnections   int            `json:"private_ip_connections"`
-	PublicIPConnections    int            `json:"public_ip_connections"`
-	TopSourceIPCount       int            `json:"top_source_ip_count"`
-	TopSourceIP            string         `json:"top_source_ip"`
-	ConnectionsPerSourceIP map[string]int `json:"connections_per_source_ip"`
+	UniqueSourceIPs      int    `json:"unique_source_ips"`
+	UniqueDestIPs        int    `json:"unique_dest_ips"`
+	NewSourceIPs         int    `json:"new_source_ips"`
+	PrivateIPConnections int    `json:"private_ip_connections"`
+	PublicIPConnections  int    `json:"public_ip_connections"`
+	TopSourceIPCount     int    `json:"top_source_ip_count"`
+	TopSourceIP          string `json:"top_source_ip"`
 
 	// Port Features
-	UniqueLocalPorts         int            `json:"unique_local_ports"`
-	UniqueRemotePorts        int            `json:"unique_remote_ports"`
-	WellKnownPortConns       int            `json:"well_known_port_connections"`
-	EphemeralPortConns       int            `json:"ephemeral_port_connections"`
-	SuspiciousPortConns      int            `json:"suspicious_port_connections"`
-	PortScanIndicators       int            `json:"port_scan_indicators"`
-	ConnectionsPerLocalPort  map[uint32]int `json:"connections_per_local_port"`
-	ConnectionsPerRemotePort map[uint32]int `json:"connections_per_remote_port"`
+	UniqueLocalPorts    int `json:"unique_local_ports"`
+	UniqueRemotePorts   int `json:"unique_remote_ports"`
+	WellKnownPortConns  int `json:"well_known_port_connections"`
+	EphemeralPortConns  int `json:"ephemeral_port_connections"`
+	SuspiciousPortConns int `json:"suspicious_port_connections"`
+	PortScanIndicators  int `json:"port_scan_indicators"`
 
 	// Protocol Distribution
 	TCPRatio    float64 `json:"tcp_ratio"`
@@ -103,7 +122,8 @@ type CompleteFeatureVector struct {
 	TCPUDPRatio float64 `json:"tcp_udp_ratio"`
 
 	// Process Network Activity
-	ProcessesWithNetActivity int `json:"processes_with_net_activity"`
+	ProcessesWithNetActivity int     `json:"processes_with_net_activity"`
+	AvgConnectionsPerProcess float64 `json:"avg_connections_per_process"`
 
 	// Traffic Rates
 	ConnectionCreationRate    int `json:"connection_creation_rate"`
@@ -120,29 +140,8 @@ type CompleteFeatureVector struct {
 	PortScanningScore     float64 `json:"port_scanning_score"`
 	DataExfiltrationScore float64 `json:"data_exfiltration_score"`
 	BandwidthAsymmetry    float64 `json:"bandwidth_asymmetry"`
-
-	// Detailed Connection Data
-	ActiveConnections   []ConnectionDetail     `json:"active_connections"`
-	TopProcessesByConns []ProcessNetworkMetric `json:"top_processes_by_connections"`
-}
-
-type ConnectionDetail struct {
-	LocalIP    string `json:"local_ip"`
-	LocalPort  uint32 `json:"local_port"`
-	RemoteIP   string `json:"remote_ip"`
-	RemotePort uint32 `json:"remote_port"`
-	State      string `json:"state"`
-	PID        int32  `json:"pid"`
-	Protocol   string `json:"protocol"`
-}
-
-type ProcessNetworkMetric struct {
-	PID             int32    `json:"pid"`
-	Name            string   `json:"name"`
-	ConnectionCount int      `json:"connection_count"`
-	ListeningPorts  []uint32 `json:"listening_ports"`
-	RemoteIPs       []string `json:"remote_ips"`
-	UniqueRemoteIPs int      `json:"unique_remote_ips"`
+	C2CommunicationScore  float64 `json:"c2_communication_score"`
+	FailedConnectionRatio float64 `json:"failed_connection_ratio"`
 }
 
 // Collector state for tracking changes
@@ -151,24 +150,32 @@ type CompleteCollectorState struct {
 	LastPIDs           map[int32]bool
 	LastDiskReadBytes  uint64
 	LastDiskWriteBytes uint64
+	LastCPU            float64
+	LastMemory         float64
 
 	// Network state
 	LastNetBytesSent   uint64
 	LastNetBytesRecv   uint64
 	LastNetPacketsSent uint64
 	LastNetPacketsRecv uint64
-	LastConnections    map[string]bool // connection key
+	LastConnections    map[string]bool
 	LastSourceIPs      map[string]bool
+
+	// For C2 detection
+	ConnectionTimestamps []time.Time
+	PacketSizes          []uint64
 
 	LastTimestamp time.Time
 }
 
 func NewCompleteCollectorState() *CompleteCollectorState {
 	return &CompleteCollectorState{
-		LastPIDs:        make(map[int32]bool),
-		LastConnections: make(map[string]bool),
-		LastSourceIPs:   make(map[string]bool),
-		LastTimestamp:   time.Now(),
+		LastPIDs:             make(map[int32]bool),
+		LastConnections:      make(map[string]bool),
+		LastSourceIPs:        make(map[string]bool),
+		ConnectionTimestamps: make([]time.Time, 0),
+		PacketSizes:          make([]uint64, 0),
+		LastTimestamp:        time.Now(),
 	}
 }
 
@@ -183,12 +190,17 @@ var suspiciousPorts = map[uint32]bool{
 	8866: true, 8888: true, // Various backdoors
 }
 
+// Suspicious process name patterns
+var suspiciousProcessPatterns = []string{
+	"mimikatz", "psexec", "procdump", "lazagne",
+	"nc.exe", "netcat", "powershell", "cmd.exe",
+	"wscript", "cscript", "mshta", "rundll32",
+	"regsvr32", "certutil", "bitsadmin",
+}
+
 func CollectCompleteFeatures(state *CompleteCollectorState) (*CompleteFeatureVector, error) {
 	features := &CompleteFeatureVector{
-		Timestamp:                time.Now(),
-		ConnectionsPerSourceIP:   make(map[string]int),
-		ConnectionsPerLocalPort:  make(map[uint32]int),
-		ConnectionsPerRemotePort: make(map[uint32]int),
+		Timestamp: time.Now(),
 	}
 
 	timeDelta := features.Timestamp.Sub(state.LastTimestamp).Seconds()
@@ -207,9 +219,13 @@ func CollectCompleteFeatures(state *CompleteCollectorState) (*CompleteFeatureVec
 	}
 
 	// ========== CALCULATE DERIVED FEATURES ==========
-	calculateDerivedFeatures(features)
+	calculateDerivedFeatures(features, state)
 
+	// Update state for next iteration
 	state.LastTimestamp = features.Timestamp
+	state.LastCPU = features.SystemCPU
+	state.LastMemory = features.SystemMemoryPercent
+
 	return features, nil
 }
 
@@ -223,36 +239,52 @@ func collectHostFeatures(features *CompleteFeatureVector, state *CompleteCollect
 	features.ProcessCount = len(processes)
 	currentPIDs := make(map[int32]bool)
 
-	var totalCPU, totalMemory float64
-	var cpuCount, memCount int
+	var totalCPU, totalMemory, totalRSS, totalVMS uint64
+	var totalAge float64
+	var cpuCount, memCount, rssCount, ageCount int
 
 	for _, p := range processes {
 		pid := p.Pid
 		currentPIDs[pid] = true
 
+		// CPU
 		cpuPercent, err := p.CPUPercent()
 		if err == nil {
-			totalCPU += cpuPercent
+			totalCPU += uint64(cpuPercent * 1000) // Store as int for averaging
 			cpuCount++
 			if cpuPercent > 50.0 {
 				features.HighCPUProcessCount++
 			}
 		}
 
+		// Memory percent
 		memPercent, err := p.MemoryPercent()
 		if err == nil {
-			totalMemory += float64(memPercent)
+			totalMemory += uint64(memPercent * 1000)
 			memCount++
 			if memPercent > 10.0 {
 				features.HighMemProcessCount++
 			}
 		}
 
+		// Memory info (RSS, VMS)
+		memInfo, err := p.MemoryInfo()
+		if err == nil {
+			totalRSS += memInfo.RSS
+			totalVMS += memInfo.VMS
+			rssCount++
+		}
+
+		// Threads
 		numThreads, err := p.NumThreads()
 		if err == nil {
 			features.TotalThreads += int(numThreads)
+			if numThreads > 100 {
+				features.ProcessWithManyThreads++
+			}
 		}
 
+		// Status
 		status, err := p.Status()
 		if err == nil && len(status) > 0 {
 			if status[0] == "zombie" || status[0] == "Z" {
@@ -260,17 +292,52 @@ func collectHostFeatures(features *CompleteFeatureVector, state *CompleteCollect
 			}
 		}
 
+		// Username
 		username, err := p.Username()
 		if err == nil && (username == "root" || username == "SYSTEM" || username == "NT AUTHORITY\\SYSTEM") {
 			features.RootProcessCount++
 		}
+
+		// Process age
+		createTime, err := p.CreateTime()
+		if err == nil {
+			age := float64(time.Now().Unix()) - float64(createTime/1000)
+			totalAge += age
+			ageCount++
+		}
+
+		// Process name - check for suspicious patterns
+		name, err := p.Name()
+		if err == nil {
+			nameLower := strings.ToLower(name)
+			for _, pattern := range suspiciousProcessPatterns {
+				if strings.Contains(nameLower, pattern) {
+					features.SuspiciousProcessNames++
+					break
+				}
+			}
+		}
+
+		// File descriptors (Linux/macOS only)
+		numFDs, err := p.NumFDs()
+		if err == nil {
+			features.TotalFileDescriptors += int(numFDs)
+		}
 	}
 
+	// Calculate averages
 	if cpuCount > 0 {
-		features.AvgProcessCPU = totalCPU / float64(cpuCount)
+		features.AvgProcessCPU = float64(totalCPU) / float64(cpuCount) / 1000.0
 	}
 	if memCount > 0 {
-		features.AvgProcessMemory = totalMemory / float64(memCount)
+		features.AvgProcessMemory = float64(totalMemory) / float64(memCount) / 1000.0
+	}
+	if rssCount > 0 {
+		features.AvgProcessRSS = totalRSS / uint64(rssCount)
+		features.AvgProcessVMS = totalVMS / uint64(rssCount)
+	}
+	if ageCount > 0 {
+		features.AvgProcessAge = totalAge / float64(ageCount)
 	}
 
 	// Calculate process creation/termination
@@ -286,22 +353,40 @@ func collectHostFeatures(features *CompleteFeatureVector, state *CompleteCollect
 	}
 	state.LastPIDs = currentPIDs
 
-	// System resources
+	// System CPU
 	cpuPercent, err := cpu.Percent(time.Second, false)
 	if err == nil && len(cpuPercent) > 0 {
 		features.SystemCPU = cpuPercent[0]
 	}
 
+	// Per-core CPU
+	perCoreCPU, err := cpu.Percent(time.Second, true)
+	if err == nil {
+		features.PerCoreCPU = perCoreCPU
+		var sum float64
+		for _, cpuVal := range perCoreCPU {
+			sum += cpuVal
+		}
+		if len(perCoreCPU) > 0 {
+			features.AvgCoreCPU = sum / float64(len(perCoreCPU))
+		}
+	}
+
+	// Memory
 	memInfo, err := mem.VirtualMemory()
 	if err == nil {
 		features.SystemMemoryPercent = memInfo.UsedPercent
 		features.SystemMemoryUsed = memInfo.Used
 		features.SystemMemoryAvail = memInfo.Available
+		features.SystemMemoryTotal = memInfo.Total
 	}
 
+	// Swap
 	swapInfo, err := mem.SwapMemory()
 	if err == nil {
 		features.SwapUsedPercent = swapInfo.UsedPercent
+		features.SwapTotal = swapInfo.Total
+		features.SwapUsed = swapInfo.Used
 	}
 
 	// Disk I/O
@@ -325,6 +410,7 @@ func collectHostFeatures(features *CompleteFeatureVector, state *CompleteCollect
 		if state.LastDiskWriteBytes > 0 {
 			features.DiskWriteRate = float64(totalWriteBytes-state.LastDiskWriteBytes) / timeDelta
 		}
+		features.DiskIORate = features.DiskReadRate + features.DiskWriteRate
 
 		state.LastDiskReadBytes = totalReadBytes
 		state.LastDiskWriteBytes = totalWriteBytes
@@ -334,11 +420,25 @@ func collectHostFeatures(features *CompleteFeatureVector, state *CompleteCollect
 	users, err := host.Users()
 	if err == nil {
 		features.LoggedInUsers = len(users)
+		for _, user := range users {
+			if user.Terminal != "" {
+				features.UserTerminals = append(features.UserTerminals, user.Terminal)
+			}
+			if user.Host != "" {
+				features.UserHosts = append(features.UserHosts, user.Host)
+			}
+		}
 	}
 
+	// System info
 	uptime, err := host.Uptime()
 	if err == nil {
 		features.SystemUptime = uptime
+	}
+
+	bootTime, err := host.BootTime()
+	if err == nil {
+		features.SystemBootTime = bootTime
 	}
 
 	return nil
@@ -395,9 +495,13 @@ func collectNetworkFeatures(features *CompleteFeatureVector, state *CompleteColl
 
 	// Track connections per IP for port scan detection
 	portsPerIP := make(map[string]map[uint32]bool)
+	connectionsPerSourceIP := make(map[string]int)
 
 	// Process-level network tracking
 	processConnections := make(map[int32]int)
+
+	// Failed connections tracking
+	failedConnections := 0
 
 	for _, conn := range connections {
 		// Connection states
@@ -408,6 +512,7 @@ func collectNetworkFeatures(features *CompleteFeatureVector, state *CompleteColl
 			features.ListenConnections++
 		case "TIME_WAIT":
 			features.TimeWaitConnections++
+			failedConnections++ // Consider TIME_WAIT as potentially failed
 		case "SYN_SENT":
 			features.SynSentConnections++
 		case "SYN_RECV":
@@ -430,7 +535,7 @@ func collectNetworkFeatures(features *CompleteFeatureVector, state *CompleteColl
 		if conn.Raddr.IP != "" {
 			sourceIPs[conn.Raddr.IP] = true
 			currentSourceIPs[conn.Raddr.IP] = true
-			features.ConnectionsPerSourceIP[conn.Raddr.IP]++
+			connectionsPerSourceIP[conn.Raddr.IP]++
 
 			// Track ports per IP for port scan detection
 			if portsPerIP[conn.Raddr.IP] == nil {
@@ -464,7 +569,6 @@ func collectNetworkFeatures(features *CompleteFeatureVector, state *CompleteColl
 		// Port tracking
 		if conn.Laddr.Port > 0 {
 			localPorts[conn.Laddr.Port] = true
-			features.ConnectionsPerLocalPort[conn.Laddr.Port]++
 
 			if conn.Laddr.Port < 1024 {
 				features.WellKnownPortConns++
@@ -475,7 +579,6 @@ func collectNetworkFeatures(features *CompleteFeatureVector, state *CompleteColl
 
 		if conn.Raddr.Port > 0 {
 			remotePorts[conn.Raddr.Port] = true
-			features.ConnectionsPerRemotePort[conn.Raddr.Port]++
 
 			// Check for suspicious ports
 			if suspiciousPorts[conn.Raddr.Port] || suspiciousPorts[conn.Laddr.Port] {
@@ -493,19 +596,6 @@ func collectNetworkFeatures(features *CompleteFeatureVector, state *CompleteColl
 		// Process network activity
 		if conn.Pid > 0 {
 			processConnections[conn.Pid]++
-		}
-
-		// Store connection details (limit to top N)
-		if len(features.ActiveConnections) < 100 {
-			features.ActiveConnections = append(features.ActiveConnections, ConnectionDetail{
-				LocalIP:    conn.Laddr.IP,
-				LocalPort:  conn.Laddr.Port,
-				RemoteIP:   conn.Raddr.IP,
-				RemotePort: conn.Raddr.Port,
-				State:      conn.Status,
-				PID:        conn.Pid,
-				Protocol:   getProtocolName(conn.Type),
-			})
 		}
 	}
 
@@ -525,7 +615,7 @@ func collectNetworkFeatures(features *CompleteFeatureVector, state *CompleteColl
 
 	// Find top source IP
 	maxConns := 0
-	for ip, count := range features.ConnectionsPerSourceIP {
+	for ip, count := range connectionsPerSourceIP {
 		if count > maxConns {
 			maxConns = count
 			features.TopSourceIP = ip
@@ -533,11 +623,10 @@ func collectNetworkFeatures(features *CompleteFeatureVector, state *CompleteColl
 	}
 	features.TopSourceIPCount = maxConns
 
-	// Port scan detection: if an IP connects to many different ports
-	for ip, ports := range portsPerIP {
-		if len(ports) > 10 { // Threshold for port scanning
+	// Port scan detection
+	for _, ports := range portsPerIP {
+		if len(ports) > 10 {
 			features.PortScanIndicators++
-			fmt.Printf("Potential port scan from %s to %d ports\n", ip, len(ports))
 		}
 	}
 
@@ -545,6 +634,7 @@ func collectNetworkFeatures(features *CompleteFeatureVector, state *CompleteColl
 	if features.TotalConnections > 0 {
 		features.TCPRatio = float64(features.TCPConnections) / float64(features.TotalConnections)
 		features.UDPRatio = float64(features.UDPConnections) / float64(features.TotalConnections)
+		features.FailedConnectionRatio = float64(failedConnections) / float64(features.TotalConnections)
 	}
 	if features.UDPConnections > 0 {
 		features.TCPUDPRatio = float64(features.TCPConnections) / float64(features.UDPConnections)
@@ -552,15 +642,16 @@ func collectNetworkFeatures(features *CompleteFeatureVector, state *CompleteColl
 
 	// Process network activity
 	features.ProcessesWithNetActivity = len(processConnections)
-
-	// Get top processes by connection count
-	features.TopProcessesByConns = getTopProcessesByConnections(processConnections, 5)
+	if features.ProcessesWithNetActivity > 0 {
+		features.AvgConnectionsPerProcess = float64(features.TotalConnections) / float64(features.ProcessesWithNetActivity)
+	}
 
 	// Connection churn
 	newConns := 0
 	for conn := range currentConnections {
 		if !state.LastConnections[conn] {
 			newConns++
+			state.ConnectionTimestamps = append(state.ConnectionTimestamps, time.Now())
 		}
 	}
 	closedConns := 0
@@ -576,29 +667,33 @@ func collectNetworkFeatures(features *CompleteFeatureVector, state *CompleteColl
 	return nil
 }
 
-func calculateDerivedFeatures(features *CompleteFeatureVector) {
+func calculateDerivedFeatures(features *CompleteFeatureVector, state *CompleteCollectorState) {
+	// Host-based derived features
+	features.CPUUsageSpike = features.SystemCPU - state.LastCPU
+	features.MemoryUsageSpike = features.SystemMemoryPercent - state.LastMemory
+
 	// Connection churn rate
 	if features.TotalConnections > 0 {
 		features.ConnectionChurnRate = float64(features.ConnectionCreationRate+features.ConnectionTerminationRate) /
 			float64(features.TotalConnections)
 	}
 
-	// Connection density (connections per process with network activity)
+	// Connection density
 	if features.ProcessesWithNetActivity > 0 {
 		features.ConnectionDensity = float64(features.TotalConnections) /
 			float64(features.ProcessesWithNetActivity)
 	}
 
-	// Port scanning score (heuristic)
+	// Port scanning score
 	features.PortScanningScore = float64(features.PortScanIndicators) * 10.0
 	if features.SynSentConnections > 50 {
 		features.PortScanningScore += float64(features.SynSentConnections) / 10.0
 	}
 
-	// Data exfiltration score (high outbound, low inbound)
+	// Data exfiltration score
 	if features.NetRecvRate > 0 {
 		outboundRatio := features.NetSendRate / (features.NetSendRate + features.NetRecvRate)
-		if outboundRatio > 0.8 && features.NetSendRate > 1024*1024 { // >1MB/s outbound
+		if outboundRatio > 0.8 && features.NetSendRate > 1024*1024 {
 			features.DataExfiltrationScore = outboundRatio * 100.0
 		}
 	}
@@ -612,71 +707,42 @@ func calculateDerivedFeatures(features *CompleteFeatureVector) {
 		}
 		features.BandwidthAsymmetry = diff / totalBandwidth
 	}
-}
 
-func getTopProcessesByConnections(processConns map[int32]int, limit int) []ProcessNetworkMetric {
-	type procConn struct {
-		pid   int32
-		count int
-	}
+	// C2 Communication Score (regular intervals detection)
+	if len(state.ConnectionTimestamps) > 5 {
+		// Keep only last 100 timestamps
+		if len(state.ConnectionTimestamps) > 100 {
+			state.ConnectionTimestamps = state.ConnectionTimestamps[len(state.ConnectionTimestamps)-100:]
+		}
 
-	var procs []procConn
-	for pid, count := range processConns {
-		procs = append(procs, procConn{pid: pid, count: count})
-	}
+		// Calculate interval regularity
+		if len(state.ConnectionTimestamps) >= 3 {
+			intervals := make([]float64, 0)
+			for i := 1; i < len(state.ConnectionTimestamps); i++ {
+				interval := state.ConnectionTimestamps[i].Sub(state.ConnectionTimestamps[i-1]).Seconds()
+				intervals = append(intervals, interval)
+			}
 
-	// Simple sort
-	for i := 0; i < len(procs) && i < limit; i++ {
-		for j := i + 1; j < len(procs); j++ {
-			if procs[j].count > procs[i].count {
-				procs[i], procs[j] = procs[j], procs[i]
+			// Calculate variance
+			if len(intervals) > 0 {
+				var sum, mean, variance float64
+				for _, interval := range intervals {
+					sum += interval
+				}
+				mean = sum / float64(len(intervals))
+
+				for _, interval := range intervals {
+					variance += (interval - mean) * (interval - mean)
+				}
+				variance /= float64(len(intervals))
+
+				// Low variance = regular intervals = potential C2
+				if mean > 0 && variance/mean < 0.1 {
+					features.C2CommunicationScore = 100.0 * (1.0 - variance/mean)
+				}
 			}
 		}
 	}
-
-	var result []ProcessNetworkMetric
-	for i := 0; i < len(procs) && i < limit; i++ {
-		p, err := process.NewProcess(procs[i].pid)
-		if err != nil {
-			continue
-		}
-
-		name, _ := p.Name()
-		conns, _ := p.Connections()
-
-		listeningPorts := make(map[uint32]bool)
-		remoteIPsMap := make(map[string]bool)
-
-		for _, conn := range conns {
-			if conn.Status == "LISTEN" {
-				listeningPorts[conn.Laddr.Port] = true
-			}
-			if conn.Raddr.IP != "" {
-				remoteIPsMap[conn.Raddr.IP] = true
-			}
-		}
-
-		var portsList []uint32
-		for port := range listeningPorts {
-			portsList = append(portsList, port)
-		}
-
-		var ipsList []string
-		for ip := range remoteIPsMap {
-			ipsList = append(ipsList, ip)
-		}
-
-		result = append(result, ProcessNetworkMetric{
-			PID:             procs[i].pid,
-			Name:            name,
-			ConnectionCount: procs[i].count,
-			ListeningPorts:  portsList,
-			RemoteIPs:       ipsList,
-			UniqueRemoteIPs: len(remoteIPsMap),
-		})
-	}
-
-	return result
 }
 
 func isPrivateIP(ip string) bool {
@@ -685,7 +751,6 @@ func isPrivateIP(ip string) bool {
 		return false
 	}
 
-	// Check RFC1918 private ranges
 	private := []string{
 		"10.0.0.0/8",
 		"172.16.0.0/12",
@@ -709,15 +774,226 @@ func isBroadcast(ip string) bool {
 	return ip == "255.255.255.255"
 }
 
-func getProtocolName(sockType uint32) string {
-	switch sockType {
-	case 1:
-		return "TCP"
-	case 2:
-		return "UDP"
-	default:
-		return "OTHER"
+// getCSVHeaders returns all the CSV column headers
+func getCSVHeaders() []string {
+	return []string{
+		"timestamp",
+		// Host-based features
+		"process_count",
+		"process_creation_rate",
+		"process_termination_rate",
+		"high_cpu_process_count",
+		"high_mem_process_count",
+		"avg_process_cpu",
+		"avg_process_memory",
+		"avg_process_rss",
+		"avg_process_vms",
+		"total_threads",
+		"zombie_process_count",
+		"root_process_count",
+		"avg_process_age_seconds",
+		"process_with_many_threads",
+		"suspicious_process_names",
+		"total_file_descriptors",
+		"system_cpu",
+		"avg_core_cpu",
+		"system_memory_percent",
+		"system_memory_used",
+		"system_memory_available",
+		"system_memory_total",
+		"swap_used_percent",
+		"swap_total",
+		"swap_used",
+		"disk_read_bytes",
+		"disk_write_bytes",
+		"disk_read_rate",
+		"disk_write_rate",
+		"disk_read_count",
+		"disk_write_count",
+		"disk_io_rate",
+		"logged_in_users",
+		"system_uptime",
+		"system_boot_time",
+		"cpu_usage_spike",
+		"memory_usage_spike",
+		// Network-based features
+		"total_connections",
+		"tcp_connections",
+		"udp_connections",
+		"established_connections",
+		"listen_connections",
+		"time_wait_connections",
+		"syn_sent_connections",
+		"syn_recv_connections",
+		"close_wait_connections",
+		"fin_wait_connections",
+		"net_bytes_sent",
+		"net_bytes_recv",
+		"net_packets_sent",
+		"net_packets_recv",
+		"net_errors_in",
+		"net_errors_out",
+		"net_drops_in",
+		"net_drops_out",
+		"net_send_rate",
+		"net_recv_rate",
+		"net_packet_send_rate",
+		"net_packet_recv_rate",
+		"unique_source_ips",
+		"unique_dest_ips",
+		"new_source_ips",
+		"private_ip_connections",
+		"public_ip_connections",
+		"top_source_ip_count",
+		"top_source_ip",
+		"unique_local_ports",
+		"unique_remote_ports",
+		"well_known_port_connections",
+		"ephemeral_port_connections",
+		"suspicious_port_connections",
+		"port_scan_indicators",
+		"tcp_ratio",
+		"udp_ratio",
+		"tcp_udp_ratio",
+		"processes_with_net_activity",
+		"avg_connections_per_process",
+		"connection_creation_rate",
+		"connection_termination_rate",
+		"external_ip_count",
+		"loopback_connections",
+		"broadcast_connections",
+		"connection_churn_rate",
+		"connection_density",
+		"port_scanning_score",
+		"data_exfiltration_score",
+		"bandwidth_asymmetry",
+		"c2_communication_score",
+		"failed_connection_ratio",
 	}
+}
+
+// featureToCSVRow converts a feature vector to CSV row
+func featureToCSVRow(f *CompleteFeatureVector) []string {
+	return []string{
+		f.Timestamp.Format("2006-01-02 15:04:05"),
+		// Host-based features
+		strconv.Itoa(f.ProcessCount),
+		strconv.Itoa(f.ProcessCreationRate),
+		strconv.Itoa(f.ProcessTermRate),
+		strconv.Itoa(f.HighCPUProcessCount),
+		strconv.Itoa(f.HighMemProcessCount),
+		strconv.FormatFloat(f.AvgProcessCPU, 'f', 6, 64),
+		strconv.FormatFloat(f.AvgProcessMemory, 'f', 6, 64),
+		strconv.FormatUint(f.AvgProcessRSS, 10),
+		strconv.FormatUint(f.AvgProcessVMS, 10),
+		strconv.Itoa(f.TotalThreads),
+		strconv.Itoa(f.ZombieProcessCount),
+		strconv.Itoa(f.RootProcessCount),
+		strconv.FormatFloat(f.AvgProcessAge, 'f', 2, 64),
+		strconv.Itoa(f.ProcessWithManyThreads),
+		strconv.Itoa(f.SuspiciousProcessNames),
+		strconv.Itoa(f.TotalFileDescriptors),
+		strconv.FormatFloat(f.SystemCPU, 'f', 6, 64),
+		strconv.FormatFloat(f.AvgCoreCPU, 'f', 6, 64),
+		strconv.FormatFloat(f.SystemMemoryPercent, 'f', 6, 64),
+		strconv.FormatUint(f.SystemMemoryUsed, 10),
+		strconv.FormatUint(f.SystemMemoryAvail, 10),
+		strconv.FormatUint(f.SystemMemoryTotal, 10),
+		strconv.FormatFloat(f.SwapUsedPercent, 'f', 6, 64),
+		strconv.FormatUint(f.SwapTotal, 10),
+		strconv.FormatUint(f.SwapUsed, 10),
+		strconv.FormatUint(f.DiskReadBytes, 10),
+		strconv.FormatUint(f.DiskWriteBytes, 10),
+		strconv.FormatFloat(f.DiskReadRate, 'f', 6, 64),
+		strconv.FormatFloat(f.DiskWriteRate, 'f', 6, 64),
+		strconv.FormatUint(f.DiskReadCount, 10),
+		strconv.FormatUint(f.DiskWriteCount, 10),
+		strconv.FormatFloat(f.DiskIORate, 'f', 6, 64),
+		strconv.Itoa(f.LoggedInUsers),
+		strconv.FormatUint(f.SystemUptime, 10),
+		strconv.FormatUint(f.SystemBootTime, 10),
+		strconv.FormatFloat(f.CPUUsageSpike, 'f', 6, 64),
+		strconv.FormatFloat(f.MemoryUsageSpike, 'f', 6, 64),
+		// Network-based features
+		strconv.Itoa(f.TotalConnections),
+		strconv.Itoa(f.TCPConnections),
+		strconv.Itoa(f.UDPConnections),
+		strconv.Itoa(f.EstablishedConnections),
+		strconv.Itoa(f.ListenConnections),
+		strconv.Itoa(f.TimeWaitConnections),
+		strconv.Itoa(f.SynSentConnections),
+		strconv.Itoa(f.SynRecvConnections),
+		strconv.Itoa(f.CloseWaitConnections),
+		strconv.Itoa(f.FinWaitConnections),
+		strconv.FormatUint(f.NetBytesSent, 10),
+		strconv.FormatUint(f.NetBytesRecv, 10),
+		strconv.FormatUint(f.NetPacketsSent, 10),
+		strconv.FormatUint(f.NetPacketsRecv, 10),
+		strconv.FormatUint(f.NetErrorsIn, 10),
+		strconv.FormatUint(f.NetErrorsOut, 10),
+		strconv.FormatUint(f.NetDropsIn, 10),
+		strconv.FormatUint(f.NetDropsOut, 10),
+		strconv.FormatFloat(f.NetSendRate, 'f', 6, 64),
+		strconv.FormatFloat(f.NetRecvRate, 'f', 6, 64),
+		strconv.FormatFloat(f.NetPacketSendRate, 'f', 6, 64),
+		strconv.FormatFloat(f.NetPacketRecvRate, 'f', 6, 64),
+		strconv.Itoa(f.UniqueSourceIPs),
+		strconv.Itoa(f.UniqueDestIPs),
+		strconv.Itoa(f.NewSourceIPs),
+		strconv.Itoa(f.PrivateIPConnections),
+		strconv.Itoa(f.PublicIPConnections),
+		strconv.Itoa(f.TopSourceIPCount),
+		f.TopSourceIP,
+		strconv.Itoa(f.UniqueLocalPorts),
+		strconv.Itoa(f.UniqueRemotePorts),
+		strconv.Itoa(f.WellKnownPortConns),
+		strconv.Itoa(f.EphemeralPortConns),
+		strconv.Itoa(f.SuspiciousPortConns),
+		strconv.Itoa(f.PortScanIndicators),
+		strconv.FormatFloat(f.TCPRatio, 'f', 6, 64),
+		strconv.FormatFloat(f.UDPRatio, 'f', 6, 64),
+		strconv.FormatFloat(f.TCPUDPRatio, 'f', 6, 64),
+		strconv.Itoa(f.ProcessesWithNetActivity),
+		strconv.FormatFloat(f.AvgConnectionsPerProcess, 'f', 6, 64),
+		strconv.Itoa(f.ConnectionCreationRate),
+		strconv.Itoa(f.ConnectionTerminationRate),
+		strconv.Itoa(f.ExternalIPCount),
+		strconv.Itoa(f.LoopbackConnections),
+		strconv.Itoa(f.BroadcastConnections),
+		strconv.FormatFloat(f.ConnectionChurnRate, 'f', 6, 64),
+		strconv.FormatFloat(f.ConnectionDensity, 'f', 6, 64),
+		strconv.FormatFloat(f.PortScanningScore, 'f', 6, 64),
+		strconv.FormatFloat(f.DataExfiltrationScore, 'f', 6, 64),
+		strconv.FormatFloat(f.BandwidthAsymmetry, 'f', 6, 64),
+		strconv.FormatFloat(f.C2CommunicationScore, 'f', 6, 64),
+		strconv.FormatFloat(f.FailedConnectionRatio, 'f', 6, 64),
+	}
+}
+
+// writeToCSV appends a feature vector to the CSV file
+func writeToCSV(filename string, features *CompleteFeatureVector, isNewFile bool) error {
+	file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("error opening CSV file: %w", err)
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// Write headers if it's a new file
+	if isNewFile {
+		if err := writer.Write(getCSVHeaders()); err != nil {
+			return fmt.Errorf("error writing CSV headers: %w", err)
+		}
+	}
+
+	// Write the data row
+	if err := writer.Write(featureToCSVRow(features)); err != nil {
+		return fmt.Errorf("error writing CSV row: %w", err)
+	}
+
+	return nil
 }
 
 func printCompleteFeatureSummary(f *CompleteFeatureVector) {
@@ -727,12 +1003,22 @@ func printCompleteFeatureSummary(f *CompleteFeatureVector) {
 	fmt.Println("\n--- HOST-BASED FEATURES ---")
 	fmt.Printf("Processes: %d (Created: %d, Terminated: %d)\n",
 		f.ProcessCount, f.ProcessCreationRate, f.ProcessTermRate)
-	fmt.Printf("System CPU: %.2f%% | Memory: %.2f%% | Swap: %.2f%%\n",
-		f.SystemCPU, f.SystemMemoryPercent, f.SwapUsedPercent)
+	fmt.Printf("System CPU: %.2f%% (Avg Core: %.2f%%) | Spike: %.2f%%\n",
+		f.SystemCPU, f.AvgCoreCPU, f.CPUUsageSpike)
+	fmt.Printf("Memory: %.2f%% (Used: %d MB) | Spike: %.2f%%\n",
+		f.SystemMemoryPercent, f.SystemMemoryUsed/(1024*1024), f.MemoryUsageSpike)
+	fmt.Printf("Swap: %.2f%% (Used: %d MB / Total: %d MB)\n",
+		f.SwapUsedPercent, f.SwapUsed/(1024*1024), f.SwapTotal/(1024*1024))
 	fmt.Printf("High CPU/Mem Procs: %d/%d | Zombies: %d | Root: %d\n",
 		f.HighCPUProcessCount, f.HighMemProcessCount, f.ZombieProcessCount, f.RootProcessCount)
-	fmt.Printf("Disk: Read %.2f KB/s | Write %.2f KB/s\n",
-		f.DiskReadRate/1024, f.DiskWriteRate/1024)
+	fmt.Printf("Suspicious Processes: %d | Many Threads: %d\n",
+		f.SuspiciousProcessNames, f.ProcessWithManyThreads)
+	fmt.Printf("Avg Process: CPU=%.2f%% Mem=%.2f%% Age=%.0fs\n",
+		f.AvgProcessCPU, f.AvgProcessMemory, f.AvgProcessAge)
+	fmt.Printf("Disk I/O: Read %.2f KB/s | Write %.2f KB/s | Total: %.2f KB/s\n",
+		f.DiskReadRate/1024, f.DiskWriteRate/1024, f.DiskIORate/1024)
+	fmt.Printf("Users: %d | Uptime: %d seconds\n",
+		f.LoggedInUsers, f.SystemUptime)
 
 	fmt.Println("\n--- NETWORK-BASED FEATURES ---")
 	fmt.Printf("Total Connections: %d (TCP: %d, UDP: %d)\n",
@@ -755,33 +1041,36 @@ func printCompleteFeatureSummary(f *CompleteFeatureVector) {
 		f.NetErrorsIn, f.NetDropsIn, f.NetErrorsOut, f.NetDropsOut)
 	fmt.Printf("Connection Churn: Created=%d, Terminated=%d, Rate=%.3f\n",
 		f.ConnectionCreationRate, f.ConnectionTerminationRate, f.ConnectionChurnRate)
+	fmt.Printf("Processes with Network Activity: %d (Avg %.2f conns/process)\n",
+		f.ProcessesWithNetActivity, f.AvgConnectionsPerProcess)
 
 	fmt.Println("\n--- DERIVED SECURITY SCORES ---")
 	fmt.Printf("Port Scan Indicators: %d (Score: %.2f)\n",
 		f.PortScanIndicators, f.PortScanningScore)
 	fmt.Printf("Data Exfiltration Score: %.2f\n", f.DataExfiltrationScore)
+	fmt.Printf("C2 Communication Score: %.2f\n", f.C2CommunicationScore)
 	fmt.Printf("Bandwidth Asymmetry: %.3f\n", f.BandwidthAsymmetry)
 	fmt.Printf("Connection Density: %.2f connections/process\n", f.ConnectionDensity)
-
-	if len(f.TopProcessesByConns) > 0 {
-		fmt.Println("\n--- TOP PROCESSES BY NETWORK ACTIVITY ---")
-		for i, proc := range f.TopProcessesByConns {
-			fmt.Printf("%d. PID %d (%s): %d connections, %d unique IPs\n",
-				i+1, proc.PID, proc.Name, proc.ConnectionCount, proc.UniqueRemoteIPs)
-		}
-	}
+	fmt.Printf("Failed Connection Ratio: %.3f\n", f.FailedConnectionRatio)
 
 	fmt.Println("\n" + strings.Repeat("=", 70))
 }
 
 func main() {
+	csvFilename := "reading.csv"
 	state := NewCompleteCollectorState()
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	fmt.Println("Starting Complete Host + Network-Based IDS Feature Collection")
 	fmt.Println("Collection interval: 10 seconds")
+	fmt.Println("Output file: " + csvFilename)
+	fmt.Println("Total metrics: 87")
 	fmt.Println(strings.Repeat("=", 70))
+
+	// Check if file exists to determine if we need to write headers
+	_, err := os.Stat(csvFilename)
+	isNewFile := os.IsNotExist(err)
 
 	// Initial collection
 	features, err := CollectCompleteFeatures(state)
@@ -789,6 +1078,14 @@ func main() {
 		fmt.Printf("Error: %v\n", err)
 	} else {
 		printCompleteFeatureSummary(features)
+
+		// Write to CSV
+		if err := writeToCSV(csvFilename, features, isNewFile); err != nil {
+			fmt.Printf("Error writing to CSV: %v\n", err)
+		} else {
+			fmt.Printf("✓ Data saved to %s\n", csvFilename)
+		}
+		isNewFile = false
 	}
 
 	for range ticker.C {
@@ -800,8 +1097,11 @@ func main() {
 
 		printCompleteFeatureSummary(features)
 
-		// TODO: Send features to ML model for real-time inference
-		// TODO: Store in time-series database (InfluxDB, Prometheus, etc.)
-		// TODO: Export to CSV/JSON for training data collection
+		// Write to CSV
+		if err := writeToCSV(csvFilename, features, false); err != nil {
+			fmt.Printf("Error writing to CSV: %v\n", err)
+		} else {
+			fmt.Printf("✓ Data saved to %s\n", csvFilename)
+		}
 	}
 }
